@@ -320,7 +320,7 @@ static void encoder_cleanup(__sn__Encoder *self) {
 
 /* Public: create a root object encoder (starts with '{'). */
 __sn__Encoder *sn_json_encoder(void) {
-    JsonBuffer *buffer = json_buffer_new(256);
+    JsonBuffer *buffer = json_buffer_new(4096);
     json_buffer_append_char(buffer, '{');
     __sn__Encoder *enc = (__sn__Encoder *)calloc(1, sizeof(__sn__Encoder));
     JsonEncoderCtx *ctx = (JsonEncoderCtx *)calloc(1, sizeof(JsonEncoderCtx));
@@ -335,7 +335,7 @@ __sn__Encoder *sn_json_encoder(void) {
 
 /* Public: create a root array encoder (starts with '['). */
 __sn__Encoder *sn_json_array_encoder(void) {
-    JsonBuffer *buffer = json_buffer_new(256);
+    JsonBuffer *buffer = json_buffer_new(65536);
     json_buffer_append_char(buffer, '[');
     __sn__Encoder *enc = (__sn__Encoder *)calloc(1, sizeof(__sn__Encoder));
     JsonEncoderCtx *ctx = (JsonEncoderCtx *)calloc(1, sizeof(JsonEncoderCtx));
