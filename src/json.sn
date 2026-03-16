@@ -1,0 +1,50 @@
+# ==============================================================================
+# json/json.sn - JSON serialization via string manipulation
+# ==============================================================================
+# Zero-dependency JSON encoder/decoder for @serializable structs.
+# Uses direct string building (snprintf) — no json-c, no intermediate tree.
+#
+# Usage:
+#   import "json/json"
+#
+#   @serializable
+#   struct Person =>
+#       name: str
+#       age: int
+#
+#   var p: Person = Person { name: "Alice", age: 30 }
+#
+#   # Serialize
+#   var enc: Encoder = Json.encoder()
+#   p.encode(enc)
+#   var jsonStr: str = enc.result()
+#   println(jsonStr)   # {"name":"Alice","age":30}
+#
+#   # Deserialize
+#   var p2: Person = Person.decode(Json.decoder(jsonStr))
+# ==============================================================================
+
+@source "json.sn.c"
+
+struct Json =>
+
+    # Create a new JSON encoder (string builder, no library dependency)
+    static fn encoder(): Encoder =>
+        return sn_json_encoder()
+
+    # Create a new JSON array encoder (starts with [, result closes with ])
+    static fn arrayEncoder(): Encoder =>
+        return sn_json_array_encoder()
+
+    # Create a JSON decoder from a raw JSON string
+    static fn decoder(input: str): Decoder =>
+        return sn_json_decoder(input)
+
+    # Create a JSON decoder from a raw JSON array string (alias for decoder)
+    static fn arrayDecoder(input: str): Decoder =>
+        return sn_json_decoder(input)
+
+# Native factory functions
+native fn sn_json_encoder(): Encoder
+native fn sn_json_array_encoder(): Encoder
+native fn sn_json_decoder(input: str): Decoder

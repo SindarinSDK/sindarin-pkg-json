@@ -1,0 +1,7 @@
+name: sindarin-pkg-json
+version: 1.0.0
+license: MIT
+dependencies:
+- name: sindarin-pkg-test
+  git: git@github.com:SindarinSDK/sindarin-pkg-test.git
+  branch: main
