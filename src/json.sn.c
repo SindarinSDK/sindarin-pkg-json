@@ -61,10 +61,20 @@ static void json_buffer_append_str(JsonBuffer *buf, const char *str) {
     json_buffer_append_raw(buf, str, strlen(str));
 }
 
-/* Append a JSON-escaped string (without surrounding quotes). */
+/* Append a JSON-escaped string (without surrounding quotes).
+ * Scans for runs of safe characters and copies them in bulk. */
 static void json_buffer_append_escaped(JsonBuffer *buf, const char *str) {
     if (!str) return;
-    for (const char *p = str; *p; p++) {
+    const char *p = str;
+    while (*p) {
+        /* Scan for a run of characters that don't need escaping. */
+        const char *run_start = p;
+        while (*p && (unsigned char)*p >= 0x20 && *p != '"' && *p != '\\') p++;
+        if (p > run_start) {
+            json_buffer_append_raw(buf, run_start, p - run_start);
+        }
+        if (!*p) break;
+        /* Handle the special character. */
         switch (*p) {
             case '"':  json_buffer_append_raw(buf, "\\\"", 2); break;
             case '\\': json_buffer_append_raw(buf, "\\\\", 2); break;
@@ -73,16 +83,19 @@ static void json_buffer_append_escaped(JsonBuffer *buf, const char *str) {
             case '\t': json_buffer_append_raw(buf, "\\t", 2);  break;
             case '\b': json_buffer_append_raw(buf, "\\b", 2);  break;
             case '\f': json_buffer_append_raw(buf, "\\f", 2);  break;
-            default:
-                if ((unsigned char)*p < 0x20) {
-                    char escaped[8];
-                    int n = snprintf(escaped, sizeof(escaped), "\\u%04x", (unsigned char)*p);
-                    json_buffer_append_raw(buf, escaped, n);
-                } else {
-                    json_buffer_append_char(buf, *p);
-                }
+            default: {
+                /* Control character < 0x20: emit \uXXXX directly */
+                char escaped[7];
+                unsigned char c = (unsigned char)*p;
+                escaped[0] = '\\'; escaped[1] = 'u'; escaped[2] = '0'; escaped[3] = '0';
+                escaped[4] = "0123456789abcdef"[c >> 4];
+                escaped[5] = "0123456789abcdef"[c & 0x0f];
+                escaped[6] = '\0';
+                json_buffer_append_raw(buf, escaped, 6);
                 break;
+            }
         }
+        p++;
     }
 }
 
@@ -94,6 +107,38 @@ static void json_buffer_free(JsonBuffer *buf) {
 /* =========================================================================
  * JSON Encoder
  * ========================================================================= */
+
+/* Fast integer-to-buffer: write a long long directly without snprintf. */
+static void json_buffer_append_int(JsonBuffer *buf, long long val) {
+    char tmp[21]; /* enough for -9223372036854775808 */
+    char *end = tmp + sizeof(tmp);
+    char *p = end;
+    int negative = 0;
+
+    if (val < 0) {
+        negative = 1;
+        /* Handle LLONG_MIN safely: negate in unsigned */
+        unsigned long long uval = (unsigned long long)(-(val + 1)) + 1;
+        do { *--p = '0' + (char)(uval % 10); uval /= 10; } while (uval);
+    } else {
+        unsigned long long uval = (unsigned long long)val;
+        do { *--p = '0' + (char)(uval % 10); uval /= 10; } while (uval);
+    }
+    if (negative) *--p = '-';
+    json_buffer_append_raw(buf, p, end - p);
+}
+
+/* Write a JSON object key prefix: "key": */
+static void json_buffer_append_key(JsonBuffer *buf, const char *key) {
+    size_t key_len = strlen(key);
+    json_buffer_ensure(buf, key_len + 3); /* "key": */
+    buf->data[buf->length++] = '"';
+    memcpy(buf->data + buf->length, key, key_len);
+    buf->length += key_len;
+    buf->data[buf->length++] = '"';
+    buf->data[buf->length++] = ':';
+    buf->data[buf->length] = '\0';
+}
 
 typedef struct {
     JsonBuffer *buffer;     /* shared across all sub-encoders */
@@ -114,9 +159,8 @@ static __sn__Encoder *encoder_create_sub(JsonBuffer *buffer, int is_array);
 static void encoder_write_str(__sn__Encoder *self, const char *key, const char *val) {
     JsonEncoderCtx *ctx = (JsonEncoderCtx *)self->__sn__ctx;
     encoder_write_comma(ctx);
+    json_buffer_append_key(ctx->buffer, key);
     json_buffer_append_char(ctx->buffer, '"');
-    json_buffer_append_str(ctx->buffer, key);
-    json_buffer_append_raw(ctx->buffer, "\":\"", 3);
     json_buffer_append_escaped(ctx->buffer, val);
     json_buffer_append_char(ctx->buffer, '"');
 }
@@ -124,38 +168,37 @@ static void encoder_write_str(__sn__Encoder *self, const char *key, const char *
 static void encoder_write_int(__sn__Encoder *self, const char *key, long long val) {
     JsonEncoderCtx *ctx = (JsonEncoderCtx *)self->__sn__ctx;
     encoder_write_comma(ctx);
-    char tmp[96];
-    int n = snprintf(tmp, sizeof(tmp), "\"%s\":%lld", key, val);
-    json_buffer_append_raw(ctx->buffer, tmp, n);
+    json_buffer_append_key(ctx->buffer, key);
+    json_buffer_append_int(ctx->buffer, val);
 }
 
 static void encoder_write_double(__sn__Encoder *self, const char *key, double val) {
     JsonEncoderCtx *ctx = (JsonEncoderCtx *)self->__sn__ctx;
     encoder_write_comma(ctx);
-    char tmp[96];
-    int n;
+    json_buffer_append_key(ctx->buffer, key);
+    /* Fast path: whole numbers use integer formatting. */
     if (val == (long long)val && fabs(val) < 1e15) {
-        n = snprintf(tmp, sizeof(tmp), "\"%s\":%g", key, val);
+        json_buffer_append_int(ctx->buffer, (long long)val);
     } else {
-        n = snprintf(tmp, sizeof(tmp), "\"%s\":%.17g", key, val);
+        char tmp[32];
+        int n = snprintf(tmp, sizeof(tmp), "%.17g", val);
+        json_buffer_append_raw(ctx->buffer, tmp, n);
     }
-    json_buffer_append_raw(ctx->buffer, tmp, n);
 }
 
 static void encoder_write_bool(__sn__Encoder *self, const char *key, long long val) {
     JsonEncoderCtx *ctx = (JsonEncoderCtx *)self->__sn__ctx;
     encoder_write_comma(ctx);
-    char tmp[96];
-    int n = snprintf(tmp, sizeof(tmp), "\"%s\":%s", key, val ? "true" : "false");
-    json_buffer_append_raw(ctx->buffer, tmp, n);
+    json_buffer_append_key(ctx->buffer, key);
+    if (val) json_buffer_append_raw(ctx->buffer, "true", 4);
+    else     json_buffer_append_raw(ctx->buffer, "false", 5);
 }
 
 static void encoder_write_null(__sn__Encoder *self, const char *key) {
     JsonEncoderCtx *ctx = (JsonEncoderCtx *)self->__sn__ctx;
     encoder_write_comma(ctx);
-    char tmp[96];
-    int n = snprintf(tmp, sizeof(tmp), "\"%s\":null", key);
-    json_buffer_append_raw(ctx->buffer, tmp, n);
+    json_buffer_append_key(ctx->buffer, key);
+    json_buffer_append_raw(ctx->buffer, "null", 4);
 }
 
 /* --- Nested structure writers --- */
@@ -163,18 +206,16 @@ static void encoder_write_null(__sn__Encoder *self, const char *key) {
 static __sn__Encoder *encoder_begin_object(__sn__Encoder *self, const char *key) {
     JsonEncoderCtx *ctx = (JsonEncoderCtx *)self->__sn__ctx;
     encoder_write_comma(ctx);
-    json_buffer_append_char(ctx->buffer, '"');
-    json_buffer_append_str(ctx->buffer, key);
-    json_buffer_append_raw(ctx->buffer, "\":{", 3);
+    json_buffer_append_key(ctx->buffer, key);
+    json_buffer_append_char(ctx->buffer, '{');
     return encoder_create_sub(ctx->buffer, 0);
 }
 
 static __sn__Encoder *encoder_begin_array(__sn__Encoder *self, const char *key) {
     JsonEncoderCtx *ctx = (JsonEncoderCtx *)self->__sn__ctx;
     encoder_write_comma(ctx);
-    json_buffer_append_char(ctx->buffer, '"');
-    json_buffer_append_str(ctx->buffer, key);
-    json_buffer_append_raw(ctx->buffer, "\":[", 3);
+    json_buffer_append_key(ctx->buffer, key);
+    json_buffer_append_char(ctx->buffer, '[');
     return encoder_create_sub(ctx->buffer, 1);
 }
 
@@ -198,22 +239,19 @@ static void encoder_append_str(__sn__Encoder *self, const char *val) {
 static void encoder_append_int(__sn__Encoder *self, long long val) {
     JsonEncoderCtx *ctx = (JsonEncoderCtx *)self->__sn__ctx;
     encoder_write_comma(ctx);
-    char tmp[32];
-    int n = snprintf(tmp, sizeof(tmp), "%lld", val);
-    json_buffer_append_raw(ctx->buffer, tmp, n);
+    json_buffer_append_int(ctx->buffer, val);
 }
 
 static void encoder_append_double(__sn__Encoder *self, double val) {
     JsonEncoderCtx *ctx = (JsonEncoderCtx *)self->__sn__ctx;
     encoder_write_comma(ctx);
-    char tmp[32];
-    int n;
     if (val == (long long)val && fabs(val) < 1e15) {
-        n = snprintf(tmp, sizeof(tmp), "%g", val);
+        json_buffer_append_int(ctx->buffer, (long long)val);
     } else {
-        n = snprintf(tmp, sizeof(tmp), "%.17g", val);
+        char tmp[32];
+        int n = snprintf(tmp, sizeof(tmp), "%.17g", val);
+        json_buffer_append_raw(ctx->buffer, tmp, n);
     }
-    json_buffer_append_raw(ctx->buffer, tmp, n);
 }
 
 static void encoder_append_bool(__sn__Encoder *self, long long val) {
