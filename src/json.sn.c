@@ -140,19 +140,40 @@ static void json_buffer_append_key(JsonBuffer *buf, const char *key) {
     buf->data[buf->length] = '\0';
 }
 
+/*
+ * Encoder context uses a nesting stack instead of heap-allocating
+ * sub-encoders. Each nesting level just tracks needs_comma and is_array.
+ * Sub-encoder __sn__Encoder structs are pre-allocated inside the context.
+ * This eliminates all malloc/free for sub-encoders (was 35% of CPU).
+ */
+#define JSON_ENCODER_MAX_DEPTH 64
+
 typedef struct {
-    JsonBuffer *buffer;     /* shared across all sub-encoders */
-    int         needs_comma; /* 0 = next value is first (no comma), 1 = prepend comma */
-    int         is_array;
+    JsonBuffer    *buffer;
+    int            depth;
+    int            needs_comma[JSON_ENCODER_MAX_DEPTH];
+    int            is_array[JSON_ENCODER_MAX_DEPTH];
+    __sn__Encoder  subs[JSON_ENCODER_MAX_DEPTH]; /* pre-allocated sub-encoders */
 } JsonEncoderCtx;
 
 /* Write a comma separator if this is not the first value at this level. */
 static void encoder_write_comma(JsonEncoderCtx *ctx) {
-    if (ctx->needs_comma) json_buffer_append_char(ctx->buffer, ',');
-    ctx->needs_comma = 1;
+    if (ctx->needs_comma[ctx->depth]) json_buffer_append_char(ctx->buffer, ',');
+    ctx->needs_comma[ctx->depth] = 1;
 }
 
-static __sn__Encoder *encoder_create_sub(JsonBuffer *buffer, int is_array);
+static __sn__EncoderVTable encoder_vtable; /* forward decl */
+
+/* Push a new nesting level and return the pre-allocated sub-encoder. */
+static __sn__Encoder *encoder_push(JsonEncoderCtx *ctx, int is_array) {
+    ctx->depth++;
+    ctx->needs_comma[ctx->depth] = 0;
+    ctx->is_array[ctx->depth] = is_array;
+    ctx->subs[ctx->depth].__sn__vt = &encoder_vtable;
+    ctx->subs[ctx->depth].__sn__ctx = ctx;
+    ctx->subs[ctx->depth].__sn__cleanup = NULL;
+    return &ctx->subs[ctx->depth];
+}
 
 /* --- Keyed writers (for object fields) --- */
 
@@ -208,7 +229,7 @@ static __sn__Encoder *encoder_begin_object(__sn__Encoder *self, const char *key)
     encoder_write_comma(ctx);
     json_buffer_append_key(ctx->buffer, key);
     json_buffer_append_char(ctx->buffer, '{');
-    return encoder_create_sub(ctx->buffer, 0);
+    return encoder_push(ctx, 0);
 }
 
 static __sn__Encoder *encoder_begin_array(__sn__Encoder *self, const char *key) {
@@ -216,14 +237,13 @@ static __sn__Encoder *encoder_begin_array(__sn__Encoder *self, const char *key) 
     encoder_write_comma(ctx);
     json_buffer_append_key(ctx->buffer, key);
     json_buffer_append_char(ctx->buffer, '[');
-    return encoder_create_sub(ctx->buffer, 1);
+    return encoder_push(ctx, 1);
 }
 
 static void encoder_end(__sn__Encoder *self) {
     JsonEncoderCtx *ctx = (JsonEncoderCtx *)self->__sn__ctx;
-    json_buffer_append_char(ctx->buffer, ctx->is_array ? ']' : '}');
-    free(ctx);
-    free(self);
+    json_buffer_append_char(ctx->buffer, ctx->is_array[ctx->depth] ? ']' : '}');
+    ctx->depth--;
 }
 
 /* --- Array element appenders (for array encoders) --- */
@@ -264,13 +284,13 @@ static __sn__Encoder *encoder_append_object(__sn__Encoder *self) {
     JsonEncoderCtx *ctx = (JsonEncoderCtx *)self->__sn__ctx;
     encoder_write_comma(ctx);
     json_buffer_append_char(ctx->buffer, '{');
-    return encoder_create_sub(ctx->buffer, 0);
+    return encoder_push(ctx, 0);
 }
 
 /* Finalize the top-level encoder: close the root bracket and return the JSON string. */
 static char *encoder_result(__sn__Encoder *self) {
     JsonEncoderCtx *ctx = (JsonEncoderCtx *)self->__sn__ctx;
-    json_buffer_append_char(ctx->buffer, ctx->is_array ? ']' : '}');
+    json_buffer_append_char(ctx->buffer, ctx->is_array[ctx->depth] ? ']' : '}');
     char *result = strdup(ctx->buffer->data);
     json_buffer_free(ctx->buffer);
     free(ctx);
@@ -296,18 +316,6 @@ static __sn__EncoderVTable encoder_vtable = {
     .result       = encoder_result,
 };
 
-/* Create a sub-encoder that shares the parent's buffer. */
-static __sn__Encoder *encoder_create_sub(JsonBuffer *buffer, int is_array) {
-    __sn__Encoder *enc = (__sn__Encoder *)calloc(1, sizeof(__sn__Encoder));
-    JsonEncoderCtx *ctx = (JsonEncoderCtx *)calloc(1, sizeof(JsonEncoderCtx));
-    ctx->buffer = buffer;
-    ctx->needs_comma = 0;
-    ctx->is_array = is_array;
-    enc->__sn__vt = &encoder_vtable;
-    enc->__sn__ctx = ctx;
-    return enc;
-}
-
 /* Cleanup handler for the root encoder (frees buffer + context). */
 static void encoder_cleanup(__sn__Encoder *self) {
     JsonEncoderCtx *ctx = (JsonEncoderCtx *)self->__sn__ctx;
@@ -318,15 +326,21 @@ static void encoder_cleanup(__sn__Encoder *self) {
     }
 }
 
+/* Initialize an encoder context at depth 0. */
+static void encoder_init_ctx(JsonEncoderCtx *ctx, JsonBuffer *buffer, int is_array) {
+    ctx->buffer = buffer;
+    ctx->depth = 0;
+    ctx->needs_comma[0] = 0;
+    ctx->is_array[0] = is_array;
+}
+
 /* Public: create a root object encoder (starts with '{'). */
 __sn__Encoder *sn_json_encoder(void) {
     JsonBuffer *buffer = json_buffer_new(4096);
     json_buffer_append_char(buffer, '{');
     __sn__Encoder *enc = (__sn__Encoder *)calloc(1, sizeof(__sn__Encoder));
     JsonEncoderCtx *ctx = (JsonEncoderCtx *)calloc(1, sizeof(JsonEncoderCtx));
-    ctx->buffer = buffer;
-    ctx->needs_comma = 0;
-    ctx->is_array = 0;
+    encoder_init_ctx(ctx, buffer, 0);
     enc->__sn__vt = &encoder_vtable;
     enc->__sn__ctx = ctx;
     enc->__sn__cleanup = encoder_cleanup;
@@ -339,9 +353,7 @@ __sn__Encoder *sn_json_array_encoder(void) {
     json_buffer_append_char(buffer, '[');
     __sn__Encoder *enc = (__sn__Encoder *)calloc(1, sizeof(__sn__Encoder));
     JsonEncoderCtx *ctx = (JsonEncoderCtx *)calloc(1, sizeof(JsonEncoderCtx));
-    ctx->buffer = buffer;
-    ctx->needs_comma = 0;
-    ctx->is_array = 1;
+    encoder_init_ctx(ctx, buffer, 1);
     enc->__sn__vt = &encoder_vtable;
     enc->__sn__ctx = ctx;
     enc->__sn__cleanup = encoder_cleanup;
