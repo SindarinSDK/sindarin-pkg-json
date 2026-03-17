@@ -1,0 +1,12 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    uses: SindarinSDK/sindarin-pipelines/.github/workflows/sindarin-package-test.yml@main
