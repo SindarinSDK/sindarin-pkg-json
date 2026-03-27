@@ -6,7 +6,7 @@
 #------------------------------------------------------------------------------
 # Phony targets
 #------------------------------------------------------------------------------
-.PHONY: all test clean help
+.PHONY: all test hooks clean help
 
 # Disable implicit rules for .sn.c files (these are compiled by the Sindarin compiler)
 %.sn: %.sn.c
@@ -55,7 +55,7 @@ all: test
 #------------------------------------------------------------------------------
 # test - Run self-tests using compiled Sindarin test runner
 #------------------------------------------------------------------------------
-test: $(RUN_TESTS_BIN)
+test: hooks $(RUN_TESTS_BIN)
 	@$(RUN_TESTS_BIN)
 
 #------------------------------------------------------------------------------
@@ -79,6 +79,12 @@ clean:
 #------------------------------------------------------------------------------
 # help - Show available targets
 #------------------------------------------------------------------------------
+#------------------------------------------------------------------------------
+# hooks - Configure git to use tracked pre-commit hooks
+#------------------------------------------------------------------------------
+hooks:
+	@git config core.hooksPath .githooks 2>/dev/null || true
+
 help:
 	@echo "Sindarin JSON Package"
 	@echo ""
