@@ -197,6 +197,12 @@ static void encoder_write_double(__sn__Encoder *self, const char *key, double va
     JsonEncoderCtx *ctx = (JsonEncoderCtx *)self->__sn__ctx;
     encoder_write_comma(ctx);
     json_buffer_append_key(ctx->buffer, key);
+    /* JSON has no NaN / Inf literal. Emit `null` so the payload stays valid
+     * and the decoder's zero-default path kicks in on the consuming side. */
+    if (!isfinite(val)) {
+        json_buffer_append_raw(ctx->buffer, "null", 4);
+        return;
+    }
     /* Fast path: whole numbers use integer formatting. */
     if (val == (long long)val && fabs(val) < 1e15) {
         json_buffer_append_int(ctx->buffer, (long long)val);
@@ -265,6 +271,11 @@ static void encoder_append_int(__sn__Encoder *self, long long val) {
 static void encoder_append_double(__sn__Encoder *self, double val) {
     JsonEncoderCtx *ctx = (JsonEncoderCtx *)self->__sn__ctx;
     encoder_write_comma(ctx);
+    /* JSON has no NaN / Inf literal — emit `null` to keep the payload valid. */
+    if (!isfinite(val)) {
+        json_buffer_append_raw(ctx->buffer, "null", 4);
+        return;
+    }
     if (val == (long long)val && fabs(val) < 1e15) {
         json_buffer_append_int(ctx->buffer, (long long)val);
     } else {
@@ -508,39 +519,56 @@ static JsonNode *json_parse_value(const char **cursor) {
         node->type = JSON_NODE_STRING;
         node->string_value = json_parse_string(&p);
 
-    } else if (*p == 't') {
-        /* true */
+    } else if (*p == 't' && p[1] == 'r' && p[2] == 'u' && p[3] == 'e') {
+        /* true — verified token, safe to consume 4 bytes */
         node->type = JSON_NODE_BOOL;
         node->bool_value = 1;
         p += 4;
 
-    } else if (*p == 'f') {
-        /* false */
+    } else if (*p == 'f' && p[1] == 'a' && p[2] == 'l' && p[3] == 's' && p[4] == 'e') {
+        /* false — verified token, safe to consume 5 bytes */
         node->type = JSON_NODE_BOOL;
         node->bool_value = 0;
         p += 5;
 
-    } else if (*p == 'n') {
-        /* null */
+    } else if (*p == 'n' && p[1] == 'u' && p[2] == 'l' && p[3] == 'l') {
+        /* null — verified token, safe to consume 4 bytes */
         node->type = JSON_NODE_NULL;
         p += 4;
 
-    } else {
-        /* Number — detect int vs double by scanning for '.', 'e', or 'E' */
+    } else if ((*p >= '0' && *p <= '9') || *p == '-' || *p == '+') {
+        /* Number — detect int vs double by scanning for '.', 'e', or 'E'.
+         * Only entered when the first byte is actually a number char so
+         * malformed input (e.g. bare `nan` left over from an old encoder,
+         * or a stray `]`) cannot silently zero-length-consume here. */
         char *end;
         double d = strtod(p, &end);
-        int is_integer = 1;
-        for (const char *c = p; c < end; c++) {
-            if (*c == '.' || *c == 'e' || *c == 'E') { is_integer = 0; break; }
-        }
-        if (is_integer) {
-            node->type = JSON_NODE_INT;
-            node->int_value = (long long)d;
+        if (end == p) {
+            /* strtod didn't advance — malformed. Mark null and skip one
+             * byte so the surrounding loop makes forward progress and
+             * eventually terminates instead of spinning. */
+            node->type = JSON_NODE_NULL;
+            p++;
         } else {
-            node->type = JSON_NODE_DOUBLE;
-            node->double_value = d;
+            int is_integer = 1;
+            for (const char *c = p; c < end; c++) {
+                if (*c == '.' || *c == 'e' || *c == 'E') { is_integer = 0; break; }
+            }
+            if (is_integer) {
+                node->type = JSON_NODE_INT;
+                node->int_value = (long long)d;
+            } else {
+                node->type = JSON_NODE_DOUBLE;
+                node->double_value = d;
+            }
+            p = end;
         }
-        p = end;
+
+    } else {
+        /* Unrecognized byte — treat as null and advance one byte so the
+         * caller's loop cannot infinite-spin on malformed input. */
+        node->type = JSON_NODE_NULL;
+        if (*p) p++;
     }
 
     *cursor = p;
