@@ -15,9 +15,7 @@
 # var p: Person = Person { name: "Alice", age: 30 }
 #
 # # Serialize
-# var enc: Encoder = Json.encoder()
-# p.encode(enc)
-# var jsonStr: str = enc.result()
+# var jsonStr: str = p.encode(Json.encoder())
 # println(jsonStr)   # {"name":"Alice","age":30}
 #
 # # Deserialize
