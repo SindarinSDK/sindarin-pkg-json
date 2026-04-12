@@ -22,7 +22,7 @@ struct Team =>
 
 fn main(): void =>
   // --- Test 1: Simple struct encode ---
-  var a: Address = Address {
+  var a: Address = {
     street: "123 Main St",
     city: "NYC"
   }
@@ -31,7 +31,7 @@ fn main(): void =>
   println("test_encode_address: PASS")
 
   // --- Test 2: Complex struct encode ---
-  var p: Person = Person {
+  var p: Person = {
     name: "Alice",
     age: 30,
     score: 9.5,
@@ -68,7 +68,7 @@ fn main(): void =>
   println("test_decode_person: PASS")
 
   // --- Test 5: Roundtrip ---
-  var original: Person = Person {
+  var original: Person = {
     name: "Charlie",
     age: 40,
     score: 7.7,
@@ -92,7 +92,7 @@ fn main(): void =>
   println("test_roundtrip: PASS")
 
   // --- Test 6: Array of structs ---
-  var team: Team = Team {
+  var team: Team = {
     name: "Engineering",
     members: {
       Person {
@@ -132,7 +132,7 @@ fn main(): void =>
   println("test_array_of_structs: PASS")
 
   // --- Test 7: String escaping ---
-  var esc: Address = Address {
+  var esc: Address = {
     street: "line1\nline2",
     city: "O\"Brien"
   }
