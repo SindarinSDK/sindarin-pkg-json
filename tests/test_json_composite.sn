@@ -1,0 +1,297 @@
+// Composite struct coverage tests for JSON encoder/decoder.
+// Exercises every serial_action codegen path: int[], double[], bool[],
+// multiple struct fields, multiple array fields, and deep composites.
+import "../src/json"
+
+// --- Structs covering all array primitive types ---
+
+@serializable
+struct Metrics =>
+  counts: int[]
+  scores: double[]
+  flags: bool[]
+  labels: str[]
+
+// --- Struct with multiple struct fields ---
+
+@serializable
+struct Location =>
+  lat: double
+  lng: double
+
+@serializable
+struct TimeRange =>
+  start: int
+  end: int
+
+@serializable
+struct Event =>
+  name: str
+  location: Location
+  timeRange: TimeRange
+  active: bool
+
+// --- Deep composite: struct with array of structs that contain arrays ---
+
+@serializable
+struct Tag =>
+  key: str
+  values: str[]
+
+@serializable
+struct Item =>
+  id: int
+  name: str
+  tags: Tag[]
+  scores: double[]
+
+@serializable
+struct Inventory =>
+  owner: str
+  items: Item[]
+  totals: int[]
+
+fn main(): void =>
+  // =========================================================================
+  // Test 1: int[] roundtrip
+  // =========================================================================
+  var m1: Metrics = {
+    counts: {1, 2, 3, -5, 0, 999},
+    scores: {},
+    flags: {},
+    labels: {}
+  }
+  var j1: str = m1.encode(Json.encoder())
+  var m1d: Metrics = Metrics.decode(Json.decoder(j1))
+  assert(m1d.counts.length == 6, "int[] length")
+  assert(m1d.counts[0] == 1, "int[] first")
+  assert(m1d.counts[3] == -5, "int[] negative")
+  assert(m1d.counts[5] == 999, "int[] last")
+  println("test_int_array: PASS")
+
+  // =========================================================================
+  // Test 2: double[] roundtrip
+  // =========================================================================
+  var m2: Metrics = {
+    counts: {},
+    scores: {1.5, -0.001, 0.0, 3.14159},
+    flags: {},
+    labels: {}
+  }
+  var j2: str = m2.encode(Json.encoder())
+  var m2d: Metrics = Metrics.decode(Json.decoder(j2))
+  assert(m2d.scores.length == 4, "double[] length")
+  assert(m2d.scores[0] == 1.5, "double[] first")
+  assert(m2d.scores[1] == -0.001, "double[] negative")
+  assert(m2d.scores[3] == 3.14159, "double[] pi")
+  println("test_double_array: PASS")
+
+  // =========================================================================
+  // Test 3: bool[] roundtrip
+  // =========================================================================
+  var m3: Metrics = {
+    counts: {},
+    scores: {},
+    flags: {true, false, true, true, false},
+    labels: {}
+  }
+  var j3: str = m3.encode(Json.encoder())
+  var m3d: Metrics = Metrics.decode(Json.decoder(j3))
+  assert(m3d.flags.length == 5, "bool[] length")
+  assert(m3d.flags[0] == true, "bool[] first")
+  assert(m3d.flags[1] == false, "bool[] second")
+  assert(m3d.flags[4] == false, "bool[] last")
+  println("test_bool_array: PASS")
+
+  // =========================================================================
+  // Test 4: All array types together
+  // =========================================================================
+  var m4: Metrics = {
+    counts: {10, 20, 30},
+    scores: {1.1, 2.2},
+    flags: {true, false},
+    labels: {"alpha", "beta", "gamma"}
+  }
+  var j4: str = m4.encode(Json.encoder())
+  var m4d: Metrics = Metrics.decode(Json.decoder(j4))
+  assert(m4d.counts.length == 3, "all arrays counts len")
+  assert(m4d.counts[2] == 30, "all arrays counts last")
+  assert(m4d.scores.length == 2, "all arrays scores len")
+  assert(m4d.scores[1] == 2.2, "all arrays scores last")
+  assert(m4d.flags.length == 2, "all arrays flags len")
+  assert(m4d.flags[0] == true, "all arrays flags first")
+  assert(m4d.labels.length == 3, "all arrays labels len")
+  assert(m4d.labels[2] == "gamma", "all arrays labels last")
+  println("test_all_array_types: PASS")
+
+  // =========================================================================
+  // Test 5: Multiple struct fields
+  // =========================================================================
+  var ev: Event = {
+    name: "Conference",
+    location: Location {
+      lat: 40.7128,
+      lng: -74.006
+    },
+    timeRange: TimeRange {
+      start: 1000,
+      end: 2000
+    },
+    active: true
+  }
+  var j5: str = ev.encode(Json.encoder())
+  var evd: Event = Event.decode(Json.decoder(j5))
+  assert(evd.name == "Conference", "multi struct name")
+  assert(evd.location.lat == 40.7128, "multi struct lat")
+  assert(evd.location.lng == -74.006, "multi struct lng")
+  assert(evd.timeRange.start == 1000, "multi struct start")
+  assert(evd.timeRange.end == 2000, "multi struct end")
+  assert(evd.active == true, "multi struct active")
+  println("test_multiple_struct_fields: PASS")
+
+  // =========================================================================
+  // Test 6: Deep composite — array of structs containing arrays
+  // =========================================================================
+  var inv: Inventory = {
+    owner: "Warehouse",
+    items: {
+      Item {
+        id: 1,
+        name: "Widget",
+        tags: {
+          Tag {
+            key: "color",
+            values: {"red", "blue"}
+          },
+          Tag {
+            key: "size",
+            values: {"S", "M", "L"}
+          }
+        },
+        scores: {9.5, 8.0}
+      },
+      Item {
+        id: 2,
+        name: "Gadget",
+        tags: {
+          Tag {
+            key: "material",
+            values: {"steel"}
+          }
+        },
+        scores: {7.0, 6.5, 9.0}
+      }
+    },
+    totals: {100, 200}
+  }
+  var j6: str = inv.encode(Json.encoder())
+  var invd: Inventory = Inventory.decode(Json.decoder(j6))
+  assert(invd.owner == "Warehouse", "deep composite owner")
+  assert(invd.items.length == 2, "deep composite items len")
+  assert(invd.items[0].id == 1, "deep composite item0 id")
+  assert(invd.items[0].name == "Widget", "deep composite item0 name")
+  assert(invd.items[0].tags.length == 2, "deep composite item0 tags len")
+  assert(invd.items[0].tags[0].key == "color", "deep composite tag0 key")
+  assert(invd.items[0].tags[0].values.length == 2, "deep composite tag0 vals len")
+  assert(invd.items[0].tags[0].values[0] == "red", "deep composite tag0 val0")
+  assert(invd.items[0].tags[0].values[1] == "blue", "deep composite tag0 val1")
+  assert(invd.items[0].tags[1].key == "size", "deep composite tag1 key")
+  assert(invd.items[0].tags[1].values.length == 3, "deep composite tag1 vals len")
+  assert(invd.items[0].tags[1].values[2] == "L", "deep composite tag1 val2")
+  assert(invd.items[0].scores.length == 2, "deep composite item0 scores len")
+  assert(invd.items[0].scores[0] == 9.5, "deep composite item0 score0")
+  assert(invd.items[1].id == 2, "deep composite item1 id")
+  assert(invd.items[1].name == "Gadget", "deep composite item1 name")
+  assert(invd.items[1].tags[0].values[0] == "steel", "deep composite item1 tag val")
+  assert(invd.items[1].scores.length == 3, "deep composite item1 scores len")
+  assert(invd.items[1].scores[2] == 9.0, "deep composite item1 score2")
+  assert(invd.totals.length == 2, "deep composite totals len")
+  assert(invd.totals[0] == 100, "deep composite totals 0")
+  assert(invd.totals[1] == 200, "deep composite totals 1")
+  println("test_deep_composite: PASS")
+
+  // =========================================================================
+  // Test 7: All array types — empty arrays roundtrip
+  // =========================================================================
+  var m7: Metrics = {
+    counts: {},
+    scores: {},
+    flags: {},
+    labels: {}
+  }
+  var j7: str = m7.encode(Json.encoder())
+  var m7d: Metrics = Metrics.decode(Json.decoder(j7))
+  assert(m7d.counts.length == 0, "empty int[]")
+  assert(m7d.scores.length == 0, "empty double[]")
+  assert(m7d.flags.length == 0, "empty bool[]")
+  assert(m7d.labels.length == 0, "empty str[]")
+  println("test_empty_typed_arrays: PASS")
+
+  // =========================================================================
+  // Test 8: All array types — stress loop (500x)
+  // =========================================================================
+  for var i: int = 0; i < 500; i++ =>
+    var m: Metrics = {
+      counts: {i, i * 2, i * 3},
+      scores: {1.1, 2.2},
+      flags: {true, false},
+      labels: {$"l{i}"}
+    }
+    var j: str = m.encode(Json.encoder())
+    var md: Metrics = Metrics.decode(Json.decoder(j))
+    assert(md.counts[0] == i, "array loop counts")
+    assert(md.labels[0] == $"l{i}", "array loop labels")
+  println("test_all_array_types_loop: PASS")
+
+  // =========================================================================
+  // Test 9: Multiple struct fields — stress loop (500x)
+  // =========================================================================
+  for var i: int = 0; i < 500; i++ =>
+    var ev2: Event = {
+      name: $"ev{i}",
+      location: Location {
+        lat: 1.0,
+        lng: 2.0
+      },
+      timeRange: TimeRange {
+        start: i,
+        end: i + 100
+      },
+      active: i % 2 == 0
+    }
+    var j: str = ev2.encode(Json.encoder())
+    var evd2: Event = Event.decode(Json.decoder(j))
+    assert(evd2.name == $"ev{i}", "multi struct loop name")
+    assert(evd2.timeRange.start == i, "multi struct loop start")
+    assert(evd2.timeRange.end == i + 100, "multi struct loop end")
+  println("test_multiple_struct_fields_loop: PASS")
+
+  // =========================================================================
+  // Test 10: Deep composite — stress loop (200x)
+  // =========================================================================
+  for var i: int = 0; i < 200; i++ =>
+    var inv2: Inventory = {
+      owner: $"o{i}",
+      items: {
+        Item {
+          id: i,
+          name: $"item{i}",
+          tags: {
+            Tag {
+              key: $"k{i}",
+              values: {$"v{i}", $"w{i}"}
+            }
+          },
+          scores: {1.0, 2.0}
+        }
+      },
+      totals: {i, i * 10}
+    }
+    var j: str = inv2.encode(Json.encoder())
+    var invd2: Inventory = Inventory.decode(Json.decoder(j))
+    assert(invd2.owner == $"o{i}", "deep loop owner")
+    assert(invd2.items[0].tags[0].values[1] == $"w{i}", "deep loop nested val")
+    assert(invd2.totals[1] == i * 10, "deep loop totals")
+  println("test_deep_composite_loop: PASS")
+
+  println("\nAll composite tests passed!")

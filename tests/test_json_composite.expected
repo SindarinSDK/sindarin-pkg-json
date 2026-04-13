@@ -1,0 +1,12 @@
+test_int_array: PASS
+test_double_array: PASS
+test_bool_array: PASS
+test_all_array_types: PASS
+test_multiple_struct_fields: PASS
+test_deep_composite: PASS
+test_empty_typed_arrays: PASS
+test_all_array_types_loop: PASS
+test_multiple_struct_fields_loop: PASS
+test_deep_composite_loop: PASS
+
+All composite tests passed!

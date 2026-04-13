@@ -1,0 +1,118 @@
+// Stress test for JSON encoder/decoder memory leaks.
+// Encodes and decodes in tight loops to catch per-iteration leaks.
+// Must be compiled with -g and run with ASAN_OPTIONS=detect_leaks=1.
+import "../src/json"
+
+@serializable
+struct Address =>
+  street: str
+  city: str
+
+@serializable
+struct Person =>
+  name: str
+  age: int
+  score: double
+  active: bool
+  address: Address
+  tags: str[]
+
+@serializable
+struct Team =>
+  name: str
+  members: Person[]
+
+fn main(): void =>
+  // --- Test 1: Encode loop (1000x) ---
+  var a: Address = {
+    street: "123 Main St",
+    city: "NYC"
+  }
+  for var i: int = 0; i < 1000; i++ =>
+    var json: str = a.encode(Json.encoder())
+    assert(json == "{\"street\":\"123 Main St\",\"city\":\"NYC\"}", "encode loop")
+  println("test_encode_loop: PASS")
+
+  // --- Test 2: Decode loop (1000x) ---
+  for var i: int = 0; i < 1000; i++ =>
+    var dec: Decoder = Json.decoder("{\"street\":\"789 Pine Rd\",\"city\":\"Chicago\"}")
+    var a2: Address = Address.decode(dec)
+    assert(a2.street == "789 Pine Rd", "decode loop street")
+    assert(a2.city == "Chicago", "decode loop city")
+  println("test_decode_loop: PASS")
+
+  // --- Test 3: Roundtrip loop (1000x) ---
+  var p: Person = {
+    name: "Alice",
+    age: 30,
+    score: 9.5,
+    active: true,
+    address: Address {
+      street: "456 Oak Ave",
+      city: "LA"
+    },
+    tags: {"dev", "lead"}
+  }
+  for var i: int = 0; i < 1000; i++ =>
+    var json: str = p.encode(Json.encoder())
+    var p2: Person = Person.decode(Json.decoder(json))
+    assert(p2.name == "Alice", "roundtrip name")
+    assert(p2.age == 30, "roundtrip age")
+    assert(p2.address.city == "LA", "roundtrip city")
+    assert(p2.tags.length == 2, "roundtrip tags")
+  println("test_roundtrip_loop: PASS")
+
+  // --- Test 4: Nested struct roundtrip loop (500x) ---
+  var team: Team = {
+    name: "Engineering",
+    members: {
+      Person {
+        name: "Alice",
+        age: 30,
+        score: 9.0,
+        active: true,
+        address: Address {
+          street: "1 A",
+          city: "X"
+        },
+        tags: {"a"}
+      },
+      Person {
+        name: "Bob",
+        age: 25,
+        score: 8.0,
+        active: false,
+        address: Address {
+          street: "2 B",
+          city: "Y"
+        },
+        tags: {"b", "c"}
+      }
+    }
+  }
+  for var i: int = 0; i < 500; i++ =>
+    var json: str = team.encode(Json.encoder())
+    var team2: Team = Team.decode(Json.decoder(json))
+    assert(team2.name == "Engineering", "team roundtrip name")
+    assert(team2.members.length == 2, "team roundtrip members")
+    assert(team2.members[0].name == "Alice", "team roundtrip m0")
+    assert(team2.members[1].tags[1] == "c", "team roundtrip m1 tag")
+  println("test_nested_roundtrip_loop: PASS")
+
+  // --- Test 5: Encoder-only creation loop (1000x) ---
+  // Tests that creating an encoder and immediately extracting result doesn't leak
+  for var i: int = 0; i < 1000; i++ =>
+    var enc: Encoder = Json.encoder()
+    var result: str = enc.result()
+    assert(result == "{}", "encoder-only result")
+  println("test_encoder_creation_loop: PASS")
+
+  // --- Test 6: Decoder with varying payload sizes (500x) ---
+  for var i: int = 0; i < 500; i++ =>
+    var json: str = $"{{\"street\":\"street_{i}_with_some_extra_padding_text\",\"city\":\"city_{i}\"}}"
+    var dec: Decoder = Json.decoder(json)
+    var addr: Address = Address.decode(dec)
+    assert(addr.city == $"city_{i}", "varying decode city")
+  println("test_varying_payload_loop: PASS")
+
+  println("\nAll leak tests passed!")

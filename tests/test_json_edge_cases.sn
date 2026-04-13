@@ -1,0 +1,238 @@
+// Edge case and resiliency tests for JSON encoder/decoder.
+import "../src/json"
+
+@serializable
+struct Address =>
+  street: str
+  city: str
+
+@serializable
+struct Person =>
+  name: str
+  age: int
+  score: double
+  active: bool
+  address: Address
+  tags: str[]
+
+@serializable
+struct Team =>
+  name: str
+  members: Person[]
+
+@serializable
+struct DeepInner =>
+  value: str
+
+@serializable
+struct DeepMiddle =>
+  inner: DeepInner
+  label: str
+
+@serializable
+struct DeepOuter =>
+  middle: DeepMiddle
+  id: int
+
+@serializable
+struct AllDefaults =>
+  s: str
+  i: int
+  d: double
+  b: bool
+
+fn main(): void =>
+  // --- Test 1: Empty strings ---
+  var a: Address = {
+    street: "",
+    city: ""
+  }
+  var json: str = a.encode(Json.encoder())
+  assert(json == "{\"street\":\"\",\"city\":\"\"}", "empty strings encode")
+  var a2: Address = Address.decode(Json.decoder(json))
+  assert(a2.street == "", "empty strings decode street")
+  assert(a2.city == "", "empty strings decode city")
+  println("test_empty_strings: PASS")
+
+  // --- Test 2: Zero/default values ---
+  var p: Person = {
+    name: "",
+    age: 0,
+    score: 0.0,
+    active: false,
+    address: Address {
+      street: "",
+      city: ""
+    },
+    tags: {}
+  }
+  var json2: str = p.encode(Json.encoder())
+  var p2: Person = Person.decode(Json.decoder(json2))
+  assert(p2.name == "", "zero name")
+  assert(p2.age == 0, "zero age")
+  assert(p2.score == 0.0, "zero score")
+  assert(p2.active == false, "zero active")
+  assert(p2.address.street == "", "zero address street")
+  assert(p2.tags.length == 0, "zero tags length")
+  println("test_zero_values: PASS")
+
+  // --- Test 3: Deeply nested structs (3 levels) ---
+  var deep: DeepOuter = {
+    middle: DeepMiddle {
+      inner: DeepInner { value: "leaf" },
+      label: "mid"
+    },
+    id: 42
+  }
+  var json3: str = deep.encode(Json.encoder())
+  var deep2: DeepOuter = DeepOuter.decode(Json.decoder(json3))
+  assert(deep2.id == 42, "deep id")
+  assert(deep2.middle.label == "mid", "deep middle label")
+  assert(deep2.middle.inner.value == "leaf", "deep inner value")
+  println("test_deep_nesting: PASS")
+
+  // --- Test 4: Deep nesting roundtrip loop (100x) ---
+  for var i: int = 0; i < 100; i++ =>
+    var d: DeepOuter = {
+      middle: DeepMiddle {
+        inner: DeepInner { value: $"v{i}" },
+        label: $"l{i}"
+      },
+      id: i
+    }
+    var j: str = d.encode(Json.encoder())
+    var d2: DeepOuter = DeepOuter.decode(Json.decoder(j))
+    assert(d2.middle.inner.value == $"v{i}", "deep loop value")
+  println("test_deep_nesting_loop: PASS")
+
+  // --- Test 5: Large strings ---
+  var longStr: str = ""
+  for var i: int = 0; i < 200; i++ =>
+    longStr = $"{longStr}ABCDEFGHIJ"
+  var bigAddr: Address = {
+    street: longStr,
+    city: "small"
+  }
+  var json5: str = bigAddr.encode(Json.encoder())
+  var bigAddr2: Address = Address.decode(Json.decoder(json5))
+  assert(bigAddr2.street == longStr, "large string roundtrip")
+  assert(bigAddr2.city == "small", "large string other field")
+  println("test_large_strings: PASS")
+
+  // --- Test 6: Many array elements ---
+  var bigTags: str[] = {}
+  for var i: int = 0; i < 100; i++ =>
+    bigTags.push($"tag_{i}")
+  var bigPerson: Person = {
+    name: "Tagger",
+    age: 1,
+    score: 0.1,
+    active: true,
+    address: Address {
+      street: "x",
+      city: "y"
+    },
+    tags: bigTags
+  }
+  var json6: str = bigPerson.encode(Json.encoder())
+  var bigPerson2: Person = Person.decode(Json.decoder(json6))
+  assert(bigPerson2.tags.length == 100, "many tags length")
+  assert(bigPerson2.tags[0] == "tag_0", "many tags first")
+  assert(bigPerson2.tags[99] == "tag_99", "many tags last")
+  println("test_many_array_elements: PASS")
+
+  // --- Test 7: Repeated encode of same object ---
+  var stable: Address = {
+    street: "Stable St",
+    city: "Constant"
+  }
+  var prev: str = ""
+  for var i: int = 0; i < 100; i++ =>
+    var j: str = stable.encode(Json.encoder())
+    if i > 0 =>
+      assert(j == prev, "repeated encode consistency")
+    prev = j
+  assert(stable.street == "Stable St", "source not mutated street")
+  assert(stable.city == "Constant", "source not mutated city")
+  println("test_repeated_encode_same_object: PASS")
+
+  // --- Test 8: String escaping edge cases ---
+  var esc: Address = {
+    street: "\t\r\n",
+    city: "\\\""
+  }
+  var json8: str = esc.encode(Json.encoder())
+  var esc2: Address = Address.decode(Json.decoder(json8))
+  assert(esc2.street == "\t\r\n", "escape tab cr lf")
+  assert(esc2.city == "\\\"", "escape backslash quote")
+  println("test_escape_edge_cases: PASS")
+
+  // --- Test 9: Decode with missing keys (should get defaults) ---
+  var partial: Person = Person.decode(Json.decoder("{\"name\":\"OnlyName\"}"))
+  assert(partial.name == "OnlyName", "partial name")
+  assert(partial.age == 0, "partial age default")
+  assert(partial.score == 0.0, "partial score default")
+  assert(partial.active == false, "partial active default")
+  println("test_decode_missing_keys: PASS")
+
+  // --- Test 10: Empty object decode ---
+  var empty: AllDefaults = AllDefaults.decode(Json.decoder("{}"))
+  assert(empty.s == "", "empty obj str default")
+  assert(empty.i == 0, "empty obj int default")
+  assert(empty.d == 0.0, "empty obj double default")
+  assert(empty.b == false, "empty obj bool default")
+  println("test_empty_object_decode: PASS")
+
+  // --- Test 11: Team with empty members array ---
+  var emptyTeam: Team = {
+    name: "Ghost Team",
+    members: {}
+  }
+  var json11: str = emptyTeam.encode(Json.encoder())
+  var emptyTeam2: Team = Team.decode(Json.decoder(json11))
+  assert(emptyTeam2.name == "Ghost Team", "empty team name")
+  assert(emptyTeam2.members.length == 0, "empty team members")
+  println("test_empty_array_roundtrip: PASS")
+
+  // --- Test 12: Negative and extreme numeric values ---
+  var extremePerson: Person = {
+    name: "Extreme",
+    age: -999,
+    score: -0.001,
+    active: true,
+    address: Address {
+      street: "neg",
+      city: "val"
+    },
+    tags: {}
+  }
+  var json12: str = extremePerson.encode(Json.encoder())
+  var extreme2: Person = Person.decode(Json.decoder(json12))
+  assert(extreme2.age == -999, "negative int")
+  assert(extreme2.score == -0.001, "negative double")
+  println("test_negative_values: PASS")
+
+  // --- Test 13: Single-member team roundtrip loop (stress array-of-structs) ---
+  for var i: int = 0; i < 200; i++ =>
+    var t: Team = {
+      name: $"team_{i}",
+      members: {
+        Person {
+          name: $"member_{i}",
+          age: i,
+          score: 1.0,
+          active: true,
+          address: Address {
+            street: $"s{i}",
+            city: $"c{i}"
+          },
+          tags: {$"t{i}"}
+        }
+      }
+    }
+    var j: str = t.encode(Json.encoder())
+    var t2: Team = Team.decode(Json.decoder(j))
+    assert(t2.members[0].name == $"member_{i}", "team loop member name")
+  println("test_team_loop: PASS")
+
+  println("\nAll edge case tests passed!")

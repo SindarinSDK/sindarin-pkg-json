@@ -1,0 +1,8 @@
+test_encode_loop: PASS
+test_decode_loop: PASS
+test_roundtrip_loop: PASS
+test_nested_roundtrip_loop: PASS
+test_encoder_creation_loop: PASS
+test_varying_payload_loop: PASS
+
+All leak tests passed!
