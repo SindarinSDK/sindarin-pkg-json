@@ -486,6 +486,14 @@ static JsonNode *json_parse_value(const char **cursor) {
             }
             p = json_skip_whitespace(p);
             char *key = json_parse_string(&p);
+            if (!key) {
+                /* Malformed input — json_parse_string only returns NULL
+                 * when the cursor isn't pointing at a `"`. Store nothing
+                 * and bail out of the object so a NULL key can't end up
+                 * in the entries array where downstream lookups would
+                 * strcmp() it. */
+                break;
+            }
             p = json_skip_whitespace(p);
             if (*p == ':') p++;
             JsonNode *value = json_parse_value(&p);
@@ -605,6 +613,11 @@ static void json_node_free(JsonNode *node) {
 static JsonNode *json_object_get(JsonNode *node, const char *key) {
     if (!node || node->type != JSON_NODE_OBJECT) return NULL;
     for (int i = 0; i < node->object.count; i++) {
+        /* Defensive: skip entries with a NULL key. The parser never
+         * writes NULL keys now (see json_parse_value), but a belt-and-
+         * braces guard here prevents a SIGSEGV via strcmp if a future
+         * parser regression reintroduces the failure mode. */
+        if (!node->object.entries[i].key) continue;
         if (strcmp(node->object.entries[i].key, key) == 0)
             return node->object.entries[i].value;
     }
