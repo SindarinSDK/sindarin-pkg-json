@@ -31,9 +31,7 @@ struct Person =>
 fn main(): void =>
     // Encode
     var p: Person = Person { name: "Alice", age: 30, active: true }
-    var enc: Encoder = Json.encoder()
-    p.encode(enc)
-    var jsonStr: str = enc.result()
+    var jsonStr: str = p.encode(Json.encoder())
     println(jsonStr)   // {"name":"Alice","age":30,"active":true}
 
     // Decode
@@ -64,7 +62,7 @@ Json.encoder(): Encoder          # Create an object encoder (produces {...})
 Json.arrayEncoder(): Encoder     # Create an array encoder (produces [...])
 ```
 
-The returned `Encoder` is passed to a struct's generated `.encode()` method. Call `.result()` on the encoder to get the final JSON string.
+Pass the returned `Encoder` to a struct's generated `.encode()` method. The method finalizes the encoder and returns the JSON string.
 
 ```sindarin
 @serializable
@@ -73,9 +71,7 @@ struct Address =>
     city: str
 
 var a: Address = Address { street: "123 Main St", city: "NYC" }
-var enc: Encoder = Json.encoder()
-a.encode(enc)
-var json: str = enc.result()
+var json: str = a.encode(Json.encoder())
 // {"street":"123 Main St","city":"NYC"}
 ```
 
@@ -139,9 +135,7 @@ var team: Team = Team {
     }
 }
 
-var enc: Encoder = Json.encoder()
-team.encode(enc)
-var json: str = enc.result()
+var json: str = team.encode(Json.encoder())
 
 // Roundtrip back to a struct
 var team2: Team = Team.decode(Json.decoder(json))
